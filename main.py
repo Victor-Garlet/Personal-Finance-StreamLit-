@@ -1,6 +1,26 @@
 import streamlit as st
 import pandas as pd 
 
+
+def calc_general_stats(df):
+    df_date = df.groupby(by="Date")[["Amount"]].sum()
+    df_date["lag_1"] = df_date["Amount"].shift(1)
+    df_date["Monthly_difference [$]"] = df_date["Amount"]-df_date["lag_1"]
+    df_date["6M Moving Average Monthly Difference [$]"] = df_date["Monthly_difference [$]"].rolling(6).mean()
+    df_date["12M Moving Average Monthly Difference [$]"] = df_date["Monthly_difference [$]"].rolling(12).mean()
+    df_date["24M Moving Average Monthly Difference [$]"] = df_date["Monthly_difference [$]"].rolling(24).mean()
+    df_date["Monthly_difference [%]"] = df_date["Amount"] / df_date["lag_1"] - 1 
+    df_date["6M Total Growth [$]"] = df_date["Amount"].rolling(6).apply(lambda x: x[-1] - x[0])
+    df_date["12M Total Growth [$]"] = df_date["Amount"].rolling(12).apply(lambda x: x[-1] - x[0])
+    df_date["24M Total Growth [$]"] = df_date["Amount"].rolling(24).apply(lambda x: x[-1] - x[0])
+    df_date["6M Total Growth [%]"] = df_date["Amount"].rolling(6).apply(lambda x: x[-1] / x[0] - 1)
+    df_date["12M Total Growth [%]"] = df_date["Amount"].rolling(12).apply(lambda x: x[-1] / x[0]- 1)
+    df_date["24M Total Growth [%]"] = df_date["Amount"].rolling(24).apply(lambda x: x[-1] / x[0]- 1)
+
+    df_date = df_date.drop("lag_1", axis=1)
+
+    return df_date
+
 st.set_page_config('Personal Finance', page_icon=':moneybag:')
 
 
@@ -35,9 +55,80 @@ if file_upload:
 
         date = st.selectbox("Date Filter", options=df_institution.index)
 
-
         st.bar_chart(df_institution.loc[date])
 
+    exp3 = st.expander("General Statistics")
+    df_stats = calc_general_stats(df)
 
+    columns_config = {
+        "Amount": st.column_config.NumberColumn("Amount", format="$ %.2f"),
+        "Monthly_difference [$]": st.column_config.NumberColumn("Monthly_difference [$]", format="$ %.2f"),
+        "6M Moving Average Monthly Difference [$]": st.column_config.NumberColumn("6M Moving Average Monthly Difference [$]", format="$ %.2f"),
+        "12M Moving Average Monthly Difference [$]": st.column_config.NumberColumn("12M Moving Average Monthly Difference [$]", format="$ %.2f"),
+        "24M Moving Average Monthly Difference [$]": st.column_config.NumberColumn("24M Moving Average Monthly Difference [$]", format="$ %.2f"),
+        "Monthly_difference [%]": st.column_config.NumberColumn("Monthly_difference [%]", format="percent"),
+        "6M Total Growth [$]": st.column_config.NumberColumn("6M Total Growth [$]", format="$ %.2f"),
+        "12M Total Growth [$]": st.column_config.NumberColumn("12M Total Growth [$]", format="$ %.2f"),
+        "24M Total Growth [$]": st.column_config.NumberColumn("24M Total Growth [$]", format="$ %.2f"),
+        "6M Total Growth [%]": st.column_config.NumberColumn("6M Total Growth [%]", format="percent"),
+        "12M Total Growth [%]": st.column_config.NumberColumn("12M Total Growth [%]", format="percent"),
+        "24M Total Growth [%]": st.column_config.NumberColumn("24M Total Growth [%]", format="percent"),
+    }
+
+    tab_stats, tab_abs, tab_rel = exp3.tabs(tabs=["Data", "Evolution History", "Relative Growth"])
+
+    with tab_stats:
+        exp3.dataframe(df_stats, column_config=columns_config)
+
+    with tab_abs:
+        abs_cols = [
+            "Monthly_difference [$]", 
+            "6M Moving Average Monthly Difference [$]",
+            "12M Moving Average Monthly Difference [$]", 
+            "24M Moving Average Monthly Difference [$]" ,
+        ]
+        st.line_chart(df_stats[abs_cols])
+
+    with tab_rel:
+        rel_cols = [
+            "Monthly_difference [%]",
+            "6M Total Growth [%]",
+            "12M Total Growth [%]",
+            "24M Total Growth [%]",
+        ]
+        st.line_chart(data=df_stats[rel_cols])
+
+    with st.expander("Goals"):
+
+        col1, col2 = st.columns(2)
+
+        goal_start_date = col1.date_input("Goal start date", max_value=df_stats.index.max())
+        data_filtrada = df_stats.index[df_stats.index <= goal_start_date][-1]
+
+        custos_fixos = col1.number_input("Fixed costs", min_value=0., format="%.2f")
+
+        salario_bruto = col2.number_input("Gross salary", min_value=0., format="%.2f")
+        salario_liq = col2.number_input("Net salary", min_value=0., format="%.2f")
+
+        start_value = df_stats.loc[data_filtrada]["Amount"]
+        col1.markdown(f"**Net worth at the start of the goal**: $ {start_value:.2f}")
+
+
+        col1_pot, col2_pot = st.columns(2)
+        month = salario_liq - custos_fixos
+        year = month * 12
+        with col1_pot.container(border=True):
+            st.markdown(f"""**Monthly potential revenue**: \n\n $ {month:.2f}""")
+
+        with col2_pot.container(border=True):
+            st.markdown(f"""**Year potential revenue**: \n\n $ {year:.2f}""")
 
         
+        with st.container(border=True):
+            col1_goal, col2_goal = st.columns(2)
+            with col1_goal:
+               set_goal = st.number_input("Set goal", min_value=0., format="%.2f", value=year)
+
+            with col2_goal: 
+                finally_net = set_goal + start_value
+                st.markdown(f"Estimated net worth after goal:\n\n $ {finally_net:.2f}")
