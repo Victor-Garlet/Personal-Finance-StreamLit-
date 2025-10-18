@@ -1,5 +1,17 @@
 import streamlit as st
 import pandas as pd 
+import requests
+import datetime
+
+@st.cache_data(ttl="1day")
+def get_selic():
+    url = "https://bcb.gov.br/api/servico/sitebcb/historicotaxasjuros"
+    resp = requests.get(url)
+    df = pd.DataFrame(resp.json()["conteudo"])
+    df["DataInicioVigencia"] = pd.to_datetime(df["DataInicioVigencia"]).dt.date
+    df["DataFimVigencia"] = pd.to_datetime(df["DataFimVigencia"]).dt.date
+    df["DataFimVigencia"] = df["DataFimVigencia"].fillna(datetime.datetime.today().date())
+    return df
 
 
 def calc_general_stats(df):
@@ -21,15 +33,26 @@ def calc_general_stats(df):
 
     return df_date
 
-st.set_page_config('Personal Finance', page_icon=':moneybag:')
+st.set_page_config('MoneyDesk', page_icon=':moneybag:')
 
 
-st.markdown("""
-    # WELCOME!
-
-    ## YOUR FINANCIAL APP!
-    I hope you enjoy our financial organization solution.
-""")
+st.markdown(
+    """
+    <div style="text-align:center; padding: 40px 20px;">
+        <h1 style="color:#1E90FF; font-size:42px; margin-bottom:10px;">
+            💰 Welcome to <span style="color:#2E8B57;">MoneyDesk</span>
+        </h1>
+        <h3 style="color:#555; font-weight:400; margin-bottom:25px;">
+            Take control of your money with clarity, confidence, and data-driven insights.
+        </h3>
+        <p style="color:#666; font-size:17px; max-width:700px; margin:auto;">
+            Track your income and expenses, monitor your goals, and visualize how your wealth evolves over time. 
+            MoneyDesk helps you make smarter financial decisions - so your money starts working for you.
+        </p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 
 file_upload = st.file_uploader(label="Upload your data", type=['csv'])
@@ -106,22 +129,37 @@ if file_upload:
         data_filtrada = df_stats.index[df_stats.index <= goal_start_date][-1]
 
         custos_fixos = col1.number_input("Fixed costs", min_value=0., format="%.2f")
-
         salario_bruto = col2.number_input("Gross salary", min_value=0., format="%.2f")
         salario_liq = col2.number_input("Net salary", min_value=0., format="%.2f")
 
         start_value = df_stats.loc[data_filtrada]["Amount"]
         col1.markdown(f"**Net worth at the start of the goal**: $ {start_value:.2f}")
 
+        selic_gov = get_selic()
+        filter_selic_date = (selic_gov["DataInicioVigencia"] < goal_start_date) & (selic_gov["DataFimVigencia"] > goal_start_date)
+        selic_default = selic_gov[filter_selic_date]["MetaSelic"].iloc[0]
+        
+        selic = st.number_input("Selic (Brazilian interest rates)", min_value=0., value=selic_default, format="%.2f")
+        selic_ano = selic/100
+        selic_mes = (selic_ano + 1) ** (1/12) - 1
+        
+        # st.text(f"Annual selic rate: {100*selic_ano:.2f}%")
+        # st.text(f"Monthly selic rate: {100*selic_mes:.2f}%")
+        
+        annual_return = start_value * selic_ano
+        monthly_return = start_value * selic_mes
 
         col1_pot, col2_pot = st.columns(2)
-        month = salario_liq - custos_fixos
-        year = month * 12
+        month = (salario_liq - custos_fixos) + monthly_return
+        year = 12 * (salario_liq - custos_fixos) + annual_return
+
         with col1_pot.container(border=True):
-            st.markdown(f"""**Monthly potential revenue**: \n\n $ {month:.2f}""")
+            st.markdown(f"""**Monthly potential revenue**: \n\n $ {month:.2f}""",
+                        help = f"{salario_liq:.2f} + (-{custos_fixos:.2f}) + {monthly_return:.2f}")
 
         with col2_pot.container(border=True):
-            st.markdown(f"""**Year potential revenue**: \n\n $ {year:.2f}""")
+            st.markdown(f"""**Year potential revenue**: \n\n $ {year:.2f}""",
+                        help = f"12*({salario_liq:.2f} + (-{custos_fixos:.2f})) + {annual_return:.2f}")
 
         
         with st.container(border=True):
