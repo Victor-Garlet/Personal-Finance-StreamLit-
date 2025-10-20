@@ -33,6 +33,58 @@ def calc_general_stats(df):
 
     return df_date
 
+
+def main_goals():
+    col1, col2 = st.columns(2)
+
+    goal_start_date = col1.date_input("Goal start date", max_value=df_stats.index.max())
+    data_filtrada = df_stats.index[df_stats.index <= goal_start_date][-1]
+
+    custos_fixos = col1.number_input("Fixed costs", min_value=0., format="%.2f")
+    salario_bruto = col2.number_input("Gross salary", min_value=0., format="%.2f")
+    salario_liq = col2.number_input("Net salary", min_value=0., format="%.2f")
+
+    start_value = df_stats.loc[data_filtrada]["Amount"]
+    col1.markdown(f"**Net worth at the start of the goal**: $ {start_value:.2f}")
+
+    selic_gov = get_selic()
+    filter_selic_date = (selic_gov["DataInicioVigencia"] < goal_start_date) & (selic_gov["DataFimVigencia"] > goal_start_date)
+    selic_default = selic_gov[filter_selic_date]["MetaSelic"].iloc[0]
+                
+    selic = st.number_input("Selic (Brazilian interest rates)", min_value=0., value=selic_default, format="%.2f")
+    selic_ano = selic/100
+    selic_mes = (selic_ano + 1) ** (1/12) - 1
+                
+    # st.text(f"Annual selic rate: {100*selic_ano:.2f}%")
+    # st.text(f"Monthly selic rate: {100*selic_mes:.2f}%")
+                
+    annual_return = start_value * selic_ano
+    monthly_return = start_value * selic_mes
+
+    col1_pot, col2_pot = st.columns(2)
+    month = (salario_liq - custos_fixos) + monthly_return
+    year = 12 * (salario_liq - custos_fixos) + annual_return
+
+    with col1_pot.container(border=True):
+        st.markdown(f"""**Monthly potential revenue**: \n\n $ {month:.2f}""",
+                    help = f"{salario_liq:.2f} + (-{custos_fixos:.2f}) + {monthly_return:.2f}")
+
+    with col2_pot.container(border=True):
+        st.markdown(f"""**Year potential revenue**: \n\n $ {year:.2f}""",
+                    help = f"12*({salario_liq:.2f} + (-{custos_fixos:.2f})) + {annual_return:.2f}")
+
+                
+    with st.container(border=True):
+        col1_goal, col2_goal = st.columns(2)
+        with col1_goal:
+            set_goal = st.number_input("Set goal", min_value=0., format="%.2f", value=year)
+
+        with col2_goal: 
+            finally_net = set_goal + start_value
+            st.markdown(f"Estimated net worth after goal:\n\n $ {finally_net:.2f}")
+
+    return goal_start_date, start_value, set_goal, finally_net    
+                
 st.set_page_config('MoneyDesk', page_icon=':moneybag:')
 
 
@@ -123,50 +175,38 @@ if file_upload:
 
     with st.expander("Goals"):
 
-        col1, col2 = st.columns(2)
+        tab_main, tab_data_goal, tab_graph = st.tabs(tabs=["Settings", "Data", "Charts"])
 
-        goal_start_date = col1.date_input("Goal start date", max_value=df_stats.index.max())
-        data_filtrada = df_stats.index[df_stats.index <= goal_start_date][-1]
-
-        custos_fixos = col1.number_input("Fixed costs", min_value=0., format="%.2f")
-        salario_bruto = col2.number_input("Gross salary", min_value=0., format="%.2f")
-        salario_liq = col2.number_input("Net salary", min_value=0., format="%.2f")
-
-        start_value = df_stats.loc[data_filtrada]["Amount"]
-        col1.markdown(f"**Net worth at the start of the goal**: $ {start_value:.2f}")
-
-        selic_gov = get_selic()
-        filter_selic_date = (selic_gov["DataInicioVigencia"] < goal_start_date) & (selic_gov["DataFimVigencia"] > goal_start_date)
-        selic_default = selic_gov[filter_selic_date]["MetaSelic"].iloc[0]
+        with tab_main:
+            goal_start_date, start_value, set_goal, finally_net = main_goals()
         
-        selic = st.number_input("Selic (Brazilian interest rates)", min_value=0., value=selic_default, format="%.2f")
-        selic_ano = selic/100
-        selic_mes = (selic_ano + 1) ** (1/12) - 1
+        with tab_data_goal:
+            meses = pd.DataFrame({
+                "Reference date":[(goal_start_date + pd.DateOffset(months=i)) for i in range(1,13)],
+                "Monthly Goal": [start_value + round(set_goal/12,2) * i for i in range(1,13)],
+                #"Expected achievement": [start_value + round(set_goal/12,2) * i for i in range(1,13)],           
+                })
         
-        # st.text(f"Annual selic rate: {100*selic_ano:.2f}%")
-        # st.text(f"Monthly selic rate: {100*selic_mes:.2f}%")
-        
-        annual_return = start_value * selic_ano
-        monthly_return = start_value * selic_mes
+        meses["Reference date"] = meses["Reference date"].dt.strftime("%Y-%m")
+        df_patrimonio = df_stats.reset_index()[["Date","Amount"]]
+        df_patrimonio["Reference date"] = pd.to_datetime(df_patrimonio["Date"]).dt.strftime("%Y-%m")
+        meses = meses.merge(df_patrimonio, how="left", on="Reference date")
 
-        col1_pot, col2_pot = st.columns(2)
-        month = (salario_liq - custos_fixos) + monthly_return
-        year = 12 * (salario_liq - custos_fixos) + annual_return
+        meses = meses[["Reference date", "Monthly Goal", "Amount"]]
+        meses["Monthly goal achievement [%]"] = meses["Amount"] / meses["Monthly Goal"]
+        meses["Year goal achievement [%]"] = meses["Amount"] / finally_net
+        meses["Expected achievement"] = meses["Monthly Goal"] / finally_net
+        meses = meses.set_index("Reference date")
 
-        with col1_pot.container(border=True):
-            st.markdown(f"""**Monthly potential revenue**: \n\n $ {month:.2f}""",
-                        help = f"{salario_liq:.2f} + (-{custos_fixos:.2f}) + {monthly_return:.2f}")
+        columns_config_meses = {
+        "Monthly Goal": st.column_config.NumberColumn("Monthly Goal", format="$ %.2f"),
+        "Amount": st.column_config.NumberColumn("Achieved amount", format="$ %.2f"),
+        "Monthly goal achievement [%]": st.column_config.NumberColumn("Monthly goal achievement [%]", format="percent"),
+        "Year goal achievement [%]": st.column_config.NumberColumn("Year goal achievement [%]", format="percent"),
+        "Expected achievement": st.column_config.NumberColumn("Expected achievement", format="percent"),
+    }
 
-        with col2_pot.container(border=True):
-            st.markdown(f"""**Year potential revenue**: \n\n $ {year:.2f}""",
-                        help = f"12*({salario_liq:.2f} + (-{custos_fixos:.2f})) + {annual_return:.2f}")
+        st.dataframe(meses, column_config=columns_config_meses)
 
-        
-        with st.container(border=True):
-            col1_goal, col2_goal = st.columns(2)
-            with col1_goal:
-               set_goal = st.number_input("Set goal", min_value=0., format="%.2f", value=year)
-
-            with col2_goal: 
-                finally_net = set_goal + start_value
-                st.markdown(f"Estimated net worth after goal:\n\n $ {finally_net:.2f}")
+    with tab_graph:
+        st.line_chart(meses[["Year goal achievement [%]", "Expected achievement"]])
